@@ -88,13 +88,16 @@ def fuzzy_match_team(target_team, available_teams, cutoff=0.5):
             return best_match, f"Matched '{target_team}' to '{best_match}'."
         return best_match, None
 
-    # 4) Fuzzy match via difflib
-    close = get_close_matches(target_norm, list(norm_map.keys()), n=1, cutoff=cutoff)
+    # 4) Fuzzy match via difflib — use a HIGH cutoff to avoid garbage matches
+    #    Short names like "France" can falsely match "Ukraine" at low cutoffs.
+    #    Use 0.75 minimum (or the caller's cutoff if higher).
+    fuzzy_cutoff = max(cutoff, 0.75)
+    close = get_close_matches(target_norm, list(norm_map.keys()), n=1, cutoff=fuzzy_cutoff)
     if close:
         matched_orig = norm_map[close[0]]
         return matched_orig, f"Fuzzy matched '{target_team}' to '{matched_orig}'."
 
-    return None, None
+    return None, f"Team '{target_team}' not found. Available: {', '.join(available_teams[:15])}"
 
 # ── Formatting Helpers ──────────────────────────────────────────────────────
 
@@ -1828,11 +1831,4 @@ Be specific. Reference actual roster players by name and cite percentile numbers
         else:
             lines.append(f"*{subj_name} fills a role on {target_team} based on the similarity analysis above. See the ranking table for detailed overlap.*")
     else:
-        lines.append(f"*Add an Anthropic API key to generate a detailed roster fit analysis for {subj_name} on {target_team}.*")
-
-    lines.append("")
-    lines.append("---")
-    lines.append("")
-    lines.append(f"*Report generated from league data. Percentiles computed across {pool_size} qualifying players. Positions inferred from statistical profiles.*")
-
-    return "\n".join(lines)
+        lines.append(f"*Add an Anthropic API key to generate a detailed roster fit 
