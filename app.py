@@ -144,67 +144,36 @@ def _playtypes_to_md(data, label):
 
 
 def _match_player_in_df(search_name, available_players):
-    """
-    Fuzzy-match a player name against available players in a DataFrame.
-    Uses a scoring approach: exact > full-name-match > first+last combo > difflib.
-    Never returns a random player — requires minimum quality match.
-    """
+    """Fuzzy-match a player name against available players in a DataFrame."""
     if not search_name or not available_players:
         return None
-
-    from difflib import SequenceMatcher
-
     search_lower = search_name.lower().strip()
-    search_parts = search_lower.split()
 
-    # 1) Exact match
+    # Exact match
     for p in available_players:
         if str(p).lower().strip() == search_lower:
             return p
 
-    # 2) Score all candidates and pick the best
-    #    Build a score for each player: higher = better match
-    candidates = []
+    # Substring match
+    matches = [p for p in available_players if search_lower in str(p).lower() or str(p).lower() in search_lower]
+    if len(matches) == 1:
+        return matches[0]
+
+    # Last name match
+    search_parts = search_name.strip().split()
+    search_last = search_parts[-1].lower() if search_parts else ""
     for p in available_players:
-        p_lower = str(p).lower().strip()
-        p_parts = p_lower.split()
-        score = 0
+        p_parts = str(p).strip().split()
+        if p_parts and p_parts[-1].lower() == search_last:
+            return p
 
-        # Full name contained in either direction
-        if search_lower in p_lower or p_lower in search_lower:
-            score = max(score, 80)
-
-        # Check if ALL search words appear in the player name
-        if all(sw in p_parts for sw in search_parts):
-            score = max(score, 85)
-
-        # First AND last name match (both must match)
-        if len(search_parts) >= 2 and len(p_parts) >= 2:
-            first_match = search_parts[0] == p_parts[0]
-            last_match = search_parts[-1] == p_parts[-1]
-            if first_match and last_match:
-                score = max(score, 90)
-            elif last_match and search_parts[0][0] == p_parts[0][0]:
-                # Last name matches + first initial matches (e.g. "Z. Diallo" vs "Zoom Diallo")
-                score = max(score, 75)
-            elif last_match:
-                # Only last name matches — weak signal, many false positives
-                score = max(score, 40)
-
-        # SequenceMatcher ratio (more reliable than get_close_matches for scoring)
-        ratio = SequenceMatcher(None, search_lower, p_lower).ratio()
-        ratio_score = int(ratio * 100)
-        score = max(score, ratio_score)
-
-        if score >= 50:  # minimum threshold to even consider
-            candidates.append((score, p))
-
-    if candidates:
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        best_score, best_match = candidates[0]
-        # Only return if score is reasonably high
-        if best_score >= 55:
-            return best_match
+    # difflib fallback
+    from difflib import get_close_matches
+    close = get_close_matches(search_lower, [str(p).lower() for p in available_players], n=1, cutoff=0.6)
+    if close:
+        for p in available_players:
+            if str(p).lower() == close[0]:
+                return p
 
     return None
 
