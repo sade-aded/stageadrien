@@ -144,36 +144,67 @@ def _playtypes_to_md(data, label):
 
 
 def _match_player_in_df(search_name, available_players):
-    """Fuzzy-match a player name against available players in a DataFrame."""
+    """
+    Fuzzy-match a player name against available players in a DataFrame.
+    Uses a scoring approach: exact > full-name-match > first+last combo > difflib.
+    Never returns a random player — requires minimum quality match.
+    """
     if not search_name or not available_players:
         return None
-    search_lower = search_name.lower().strip()
 
-    # Exact match
+    from difflib import SequenceMatcher
+
+    search_lower = search_name.lower().strip()
+    search_parts = search_lower.split()
+
+    # 1) Exact match
     for p in available_players:
         if str(p).lower().strip() == search_lower:
             return p
 
-    # Substring match
-    matches = [p for p in available_players if search_lower in str(p).lower() or str(p).lower() in search_lower]
-    if len(matches) == 1:
-        return matches[0]
-
-    # Last name match
-    search_parts = search_name.strip().split()
-    search_last = search_parts[-1].lower() if search_parts else ""
+    # 2) Score all candidates and pick the best
+    #    Build a score for each player: higher = better match
+    candidates = []
     for p in available_players:
-        p_parts = str(p).strip().split()
-        if p_parts and p_parts[-1].lower() == search_last:
-            return p
+        p_lower = str(p).lower().strip()
+        p_parts = p_lower.split()
+        score = 0
 
-    # difflib fallback
-    from difflib import get_close_matches
-    close = get_close_matches(search_lower, [str(p).lower() for p in available_players], n=1, cutoff=0.6)
-    if close:
-        for p in available_players:
-            if str(p).lower() == close[0]:
-                return p
+        # Full name contained in either direction
+        if search_lower in p_lower or p_lower in search_lower:
+            score = max(score, 80)
+
+        # Check if ALL search words appear in the player name
+        if all(sw in p_parts for sw in search_parts):
+            score = max(score, 85)
+
+        # First AND last name match (both must match)
+        if len(search_parts) >= 2 and len(p_parts) >= 2:
+            first_match = search_parts[0] == p_parts[0]
+            last_match = search_parts[-1] == p_parts[-1]
+            if first_match and last_match:
+                score = max(score, 90)
+            elif last_match and search_parts[0][0] == p_parts[0][0]:
+                # Last name matches + first initial matches (e.g. "Z. Diallo" vs "Zoom Diallo")
+                score = max(score, 75)
+            elif last_match:
+                # Only last name matches — weak signal, many false positives
+                score = max(score, 40)
+
+        # SequenceMatcher ratio (more reliable than get_close_matches for scoring)
+        ratio = SequenceMatcher(None, search_lower, p_lower).ratio()
+        ratio_score = int(ratio * 100)
+        score = max(score, ratio_score)
+
+        if score >= 50:  # minimum threshold to even consider
+            candidates.append((score, p))
+
+    if candidates:
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        best_score, best_match = candidates[0]
+        # Only return if score is reasonably high
+        if best_score >= 55:
+            return best_match
 
     return None
 
@@ -608,15 +639,32 @@ if mode == "🧙 Wizard (All-in-One)":
 
                     p3_sections = []
 
-                    # Extract for subject player
+                    # Extract for subject player from SUBJECT Players file
+                    # Also try target file as fallback (user may upload only one file)
+                    subject_extracted = False
                     if subject_players_bytes:
                         subj_df = pd.read_excel(_io.BytesIO(subject_players_bytes))
                         try:
                             subj_data = extract_playtypes(subj_df, player_name)
-                            subj_md = _playtypes_to_md(subj_data, f"{player_name} (Primary)")
+                            subj_md = _playtypes_to_md(subj_data, f"{subj_data['player']} (Primary)")
                             p3_sections.append(subj_md)
+                            subject_extracted = True
                         except ValueError as ve:
-                            all_warnings.append(f"Playtype extraction (subject): {ve}")
+                            all_warnings.append(f"Playtype extraction (subject file): {ve}")
+
+                    # Fallback: if no subject file but target file exists, try there
+                    if not subject_extracted and target_players_bytes:
+                        tgt_df_check = pd.read_excel(_io.BytesIO(target_players_bytes))
+                        try:
+                            subj_data = extract_playtypes(tgt_df_check, player_name)
+                            subj_md = _playtypes_to_md(subj_data, f"{subj_data['player']} (Primary)")
+                            p3_sections.append(subj_md)
+                            subject_extracted = True
+                        except ValueError:
+                            pass  # Player not in target file either — that's expected
+
+                    if not subject_extracted:
+                        all_warnings.append(f"Could not extract playtypes for '{player_name}'. Upload a Players file for their team.")
 
                     # Extract for similar players from target team file
                     if target_players_bytes and similar_names:
@@ -624,7 +672,9 @@ if mode == "🧙 Wizard (All-in-One)":
                         available = tgt_df["Player"].tolist() if "Player" in tgt_df.columns else []
 
                         for sim_name in similar_names[:2]:
-                            # Fuzzy match the similar player name
+                            # Skip if sim_name is the subject player (already extracted above)
+                            if sim_name.lower().strip() == player_name.lower().strip():
+                                continue
                             matched = _match_player_in_df(sim_name, available)
                             if matched:
                                 try:
@@ -635,7 +685,7 @@ if mode == "🧙 Wizard (All-in-One)":
                                 except ValueError as ve:
                                     all_warnings.append(f"Playtype extraction ({sim_name}): {ve}")
                             else:
-                                all_warnings.append(f"Playtype extraction: '{sim_name}' not found in target Players file. Available: {', '.join(available[:10])}")
+                                all_warnings.append(f"Playtype: '{sim_name}' not found in target Players file. Available: {', '.join(available[:10])}")
 
                     if p3_sections:
                         full_p3_md = "\n\n---\n\n".join(p3_sections)
