@@ -1831,4 +1831,11 @@ Be specific. Reference actual roster players by name and cite percentile numbers
         else:
             lines.append(f"*{subj_name} fills a role on {target_team} based on the similarity analysis above. See the ranking table for detailed overlap.*")
     else:
-        lines.append(f"*Add an Anthropic API key to generate a detailed roster fit 
+      lines.append(f"*Add an Anthropic API key to generate a detailed roster fit analysis for {subj_name} on {target_team}.*")
+
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"*Report generated from league data. Percentiles computed across {pool_size} qualifying players. Positions inferred from statistical profiles.*")
+
+    return "\n".join(lines)
